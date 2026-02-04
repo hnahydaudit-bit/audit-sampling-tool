@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# BLUE THEME (no red anywhere)
+# BLUE THEME
 # ======================================================
 
 st.markdown("""
@@ -70,13 +70,10 @@ def normalize_dates(df, date_col):
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
-
     temp["_fy"] = (d.dt.month - 4) % 12
     temp["_yr"] = d.dt.year
     temp["_d"] = d
-
     temp = temp.sort_values(["_yr", "_fy", "_d"])
-
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
@@ -119,7 +116,7 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ Specific Ledger (Excel-style filter + row count)
+# SPECIFIC LEDGER METHOD
 # ======================================================
 
 def method_two(df, mapping):
@@ -159,7 +156,6 @@ def method_two(df, mapping):
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
 
-        # ⭐ shows row count here
         plan[l] = st.number_input(
             f"{l} (rows: {cnt}) samples",
             0,
@@ -169,7 +165,14 @@ def method_two(df, mapping):
         )
 
     remaining_rows = len(df) - selected_rows
-    rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
+
+    # ⭐ ONLY CHANGE HERE (show remaining rows)
+    rem = st.number_input(
+        f"Remaining ledgers (rows: {remaining_rows}) samples",
+        0,
+        remaining_rows,
+        min(5, remaining_rows)
+    )
 
     idx = []
 
@@ -235,10 +238,6 @@ def main():
 
     raw_df = load_data(file)
 
-    # ==================================================
-    # ⭐ EVERYTHING STAYS IN LEFT SIDEBAR
-    # ==================================================
-
     with st.sidebar:
 
         cols = raw_df.columns.tolist()
@@ -268,20 +267,6 @@ def main():
     sampled = raw_df.loc[idx]
     sampled = sort_financial_year(sampled, mapping.invoice_date)
     sampled = clean_date_format(sampled, mapping.invoice_date)
-
-    # ==================================================
-    # ⭐ Sidebar metrics (unchanged as requested)
-    # ==================================================
-
-    with st.sidebar:
-        st.divider()
-        st.metric("Total Rows", len(raw_df))
-        st.metric("Sample Size", len(sampled))
-        st.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
-
-    # ==================================================
-    # Serial numbering in UI
-    # ==================================================
 
     sampled_display = sampled.copy()
     sampled_display.index = range(1, len(sampled_display) + 1)
