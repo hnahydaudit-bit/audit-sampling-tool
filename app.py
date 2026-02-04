@@ -1,26 +1,14 @@
 import io
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 import pandas as pd
 import streamlit as st
 
 
-# ===============================
-# Config
-# ===============================
-
-REQUIRED_FIELDS = [
-    "Invoice Number",
-    "Invoice Date",
-    "Taxable Amount",
-    "Ledger Name",
-]
-
-
-# ===============================
-# Data Structures
-# ===============================
+# ======================================================
+# Data structure
+# ======================================================
 
 @dataclass
 class ColumnMapping:
@@ -30,266 +18,271 @@ class ColumnMapping:
     ledger_name: str
 
 
-# ===============================
-# File Loading
-# ===============================
+# ======================================================
+# File loading
+# ======================================================
 
-def load_data(uploaded_file) -> pd.DataFrame:
-    """Load CSV or Excel file."""
+def load_data(uploaded_file):
     if uploaded_file.name.lower().endswith(".csv"):
         return pd.read_csv(uploaded_file)
     return pd.read_excel(uploaded_file, engine="openpyxl")
 
 
-# ===============================
-# Column Mapping UI
-# ===============================
+# ======================================================
+# Column mapping
+# ======================================================
 
-def build_mapping(df: pd.DataFrame) -> Optional[ColumnMapping]:
-    st.subheader("Column Mapping")
-
+def build_mapping(df):
     cols = df.columns.tolist()
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
-        invoice_number = st.selectbox("Invoice Number column", cols)
-        invoice_date = st.selectbox("Invoice Date column", cols)
+    with c1:
+        inv = st.selectbox("Invoice Number", cols)
+        date = st.selectbox("Invoice Date", cols)
 
-    with col2:
-        taxable_amount = st.selectbox("Taxable Amount column", cols)
-        ledger_name = st.selectbox("Ledger / Supplier / Customer column", cols)
+    with c2:
+        amt = st.selectbox("Taxable Amount", cols)
+        led = st.selectbox("Ledger / Supplier / Customer", cols)
 
-    if len({invoice_number, invoice_date, taxable_amount, ledger_name}) < 4:
-        st.warning("Each field must map to a different column.")
+    if len({inv, date, amt, led}) < 4:
+        st.warning("Each mapping must be different.")
         return None
 
-    return ColumnMapping(
-        invoice_number,
-        invoice_date,
-        taxable_amount,
-        ledger_name,
-    )
+    return ColumnMapping(inv, date, amt, led)
 
 
-# ===============================
+# ======================================================
 # Helpers
-# ===============================
+# ======================================================
 
-def normalize_dates(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.dropna(subset=[date_col])
-    return df
+def normalize_dates(df, date_col):
+    temp = df.copy()
+    temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce")
+    return temp.dropna(subset=[date_col])
 
 
-# =====================================================
-# CORE LOGIC → Evenly distributed date-based sampling
-# =====================================================
+# ======================================================
+# ⭐ NEW — Financial Year Sorting (Apr → Mar)
+# ======================================================
 
-def select_evenly_distributed(df: pd.DataFrame, sample_size: int, date_col: str) -> pd.DataFrame:
-    """
-    Deterministic sampling across time buckets.
-    NO randomness.
-    Ensures spread across months/quarters.
-    """
+def sort_financial_year(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+    """Sort dataframe in Apr → Mar order while keeping original format."""
 
-    if df.empty or sample_size <= 0:
-        return df.head(0)
+    temp = df.copy()
+    temp["_date"] = pd.to_datetime(temp[date_col], errors="coerce")
 
-    df_sorted = df.sort_values(date_col).reset_index(drop=True)
+    # FY month index
+    temp["_fy_month"] = (temp["_date"].dt.month - 4) % 12
+    temp["_year"] = temp["_date"].dt.year
+
+    temp = temp.sort_values(["_year", "_fy_month", "_date"])
+
+    return temp.drop(columns=["_date", "_fy_month", "_year"])
+
+
+# ======================================================
+# Deterministic sampling → return indices only
+# ======================================================
+
+def evenly_spread_indices(df, sample_size, date_col):
+
+    if sample_size <= 0 or df.empty:
+        return []
+
+    df_sorted = df.sort_values(date_col)
 
     if sample_size >= len(df_sorted):
-        return df_sorted
+        return df_sorted.index.tolist()
 
-    bucket_size = len(df_sorted) / sample_size
-    indices = []
+    bucket = len(df_sorted) / sample_size
+    idx = []
 
     for i in range(sample_size):
-        pos = int((i + 0.5) * bucket_size)
+        pos = int((i + 0.5) * bucket)
         pos = min(pos, len(df_sorted) - 1)
-        indices.append(pos)
+        idx.append(df_sorted.index[pos])
 
-    return df_sorted.iloc[sorted(set(indices))]
+    return sorted(set(idx))
 
 
-# ===============================
+# ======================================================
 # Method 1
-# ===============================
+# ======================================================
 
-def one_per_ledger(df: pd.DataFrame, mapping: ColumnMapping) -> pd.DataFrame:
-    frames = []
+def method_one(df, mapping):
 
-    for _, ledger_df in df.groupby(mapping.ledger_name):
-        frames.append(select_evenly_distributed(ledger_df, 1, mapping.invoice_date))
+    indices = []
 
-    return pd.concat(frames, ignore_index=True) if frames else df.head(0)
+    for _, g in df.groupby(mapping.ledger_name):
+        indices.extend(evenly_spread_indices(g, 1, mapping.invoice_date))
 
-
-# ===============================
-# Method 2
-# ===============================
-
-def specific_ledger_sampling(
-    df: pd.DataFrame,
-    mapping: ColumnMapping,
-    ledger_plan: Dict[str, int],
-    remaining_count: int,
-) -> pd.DataFrame:
-
-    frames = []
-    others = []
-
-    for ledger, ledger_df in df.groupby(mapping.ledger_name):
-
-        if ledger in ledger_plan:
-            count = ledger_plan[ledger]
-            frames.append(select_evenly_distributed(ledger_df, count, mapping.invoice_date))
-        else:
-            others.append(ledger_df)
-
-    if others and remaining_count > 0:
-        others_df = pd.concat(others)
-        frames.append(select_evenly_distributed(others_df, remaining_count, mapping.invoice_date))
-
-    return pd.concat(frames, ignore_index=True) if frames else df.head(0)
+    return indices
 
 
-# ===============================
-# Method 3
-# ===============================
+# ======================================================
+# Method 2 (better filter + counts)
+# ======================================================
 
-def proportionate_sampling(df: pd.DataFrame, mapping: ColumnMapping, total_samples: int) -> pd.DataFrame:
+def method_two(df, mapping):
+
+    ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
+
+    if "selected_ledgers" not in st.session_state:
+        st.session_state.selected_ledgers = []
+
+    selected = st.multiselect(
+        "Search & select ledgers",
+        ledgers,
+        default=st.session_state.selected_ledgers
+    )
+
+    st.session_state.selected_ledgers = selected
+
+    plan = {}
+    selected_rows = 0
+
+    for l in selected:
+        cnt = len(df[df[mapping.ledger_name] == l])
+        selected_rows += cnt
+
+        plan[l] = st.number_input(
+            f"{l} (rows: {cnt})",
+            0,
+            cnt,
+            1,
+            key=f"s_{l}"
+        )
+
+    remaining_rows = len(df) - selected_rows
+
+    st.markdown(f"**Remaining ledgers rows: {remaining_rows}**")
+
+    remaining_count = st.number_input(
+        "Samples for remaining ledgers",
+        0,
+        remaining_rows,
+        min(5, remaining_rows)
+    )
+
+    indices = []
+
+    for ledger, g in df.groupby(mapping.ledger_name):
+        if ledger in plan:
+            indices.extend(evenly_spread_indices(g, plan[ledger], mapping.invoice_date))
+
+    others = df[~df[mapping.ledger_name].isin(plan.keys())]
+    indices.extend(evenly_spread_indices(others, remaining_count, mapping.invoice_date))
+
+    return indices
+
+
+# ======================================================
+# Method 3 (exact count fix)
+# ======================================================
+
+def method_three(df, mapping, total_samples):
 
     if total_samples <= 0:
-        return df.head(0)
+        return []
 
     total_rows = len(df)
 
     if total_samples >= total_rows:
-        return df
+        return df.index.tolist()
 
-    rate = total_samples / total_rows
-    frames = []
+    grouped = list(df.groupby(mapping.ledger_name))
 
-    for _, ledger_df in df.groupby(mapping.ledger_name):
-        count = max(1, int(len(ledger_df) * rate))
-        frames.append(select_evenly_distributed(ledger_df, count, mapping.invoice_date))
+    raw = []
+    floor = []
+    frac = []
 
-    return pd.concat(frames, ignore_index=True)
+    for _, g in grouped:
+        val = len(g) * total_samples / total_rows
+        raw.append(val)
+        floor.append(int(val))
+        frac.append(val - int(val))
 
+    remaining = total_samples - sum(floor)
 
-# ===============================
-# Excel Export
-# ===============================
+    order = sorted(range(len(frac)), key=lambda i: frac[i], reverse=True)
 
-def dataframe_to_excel(df: pd.DataFrame) -> bytes:
-    output = io.BytesIO()
+    for i in order[:remaining]:
+        floor[i] += 1
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Sampled Data")
+    indices = []
 
-    return output.getvalue()
+    for (_, g), cnt in zip(grouped, floor):
+        indices.extend(evenly_spread_indices(g, cnt, mapping.invoice_date))
 
-
-# ===============================
-# UI Renders
-# ===============================
-
-def render_method_one(df, mapping):
-    st.markdown("### Method 1 – One per unique ledger")
-    return one_per_ledger(df, mapping)
+    return indices
 
 
-def render_method_two(df, mapping):
+# ======================================================
+# Excel export
+# ======================================================
 
-    st.markdown("### Method 2 – Specific ledger selection")
-
-    ledgers = sorted(df[mapping.ledger_name].unique())
-
-    selected = st.multiselect("Search & select ledgers", ledgers)
-
-    plan = {}
-
-    for ledger in selected:
-        count = len(df[df[mapping.ledger_name] == ledger])
-        plan[ledger] = st.number_input(
-            f"{ledger} (rows: {count})",
-            0,
-            count,
-            1
-        )
-
-    remaining = st.number_input(
-        "Samples for remaining ledgers",
-        0,
-        len(df),
-        5
-    )
-
-    return specific_ledger_sampling(df, mapping, plan, remaining)
+def to_excel(df):
+    bio = io.BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as w:
+        df.to_excel(w, index=False)
+    return bio.getvalue()
 
 
-def render_method_three(df, mapping):
-
-    st.markdown("### Method 3 – Proportionate sampling")
-
-    st.write(f"Total rows: {len(df)}")
-
-    total = st.number_input("Total sample size", 0, len(df), 10)
-
-    return proportionate_sampling(df, mapping, total)
-
-
-# ===============================
-# Main App
-# ===============================
+# ======================================================
+# MAIN
+# ======================================================
 
 def main():
-    st.set_page_config(layout="wide", page_title="Audit Sampling Tool")
 
-    st.title("📊 Audit Sampling Tool")
-    st.write("Deterministic, date-spread sampling (no randomness).")
+    st.set_page_config(layout="wide")
+    st.title("Audit Sampling Tool")
 
     file = st.file_uploader("Upload Excel/CSV", type=["xlsx", "csv"])
 
     if not file:
         return
 
-    df = load_data(file)
+    raw_df = load_data(file)
 
-    mapping = build_mapping(df)
+    mapping = build_mapping(raw_df)
     if not mapping:
         return
 
-    df = normalize_dates(df, mapping.invoice_date)
+    work_df = normalize_dates(raw_df, mapping.invoice_date)
 
     method = st.radio(
-        "Sampling Method",
-        [
-            "Method 1",
-            "Method 2",
-            "Method 3",
-        ],
+        "Method",
+        ["One per ledger", "Specific ledgers", "Proportionate"],
+        horizontal=True
     )
 
-    if method == "Method 1":
-        sampled = render_method_one(df, mapping)
-    elif method == "Method 2":
-        sampled = render_method_two(df, mapping)
-    else:
-        sampled = render_method_three(df, mapping)
+    if method == "One per ledger":
+        idx = method_one(work_df, mapping)
 
-    st.subheader("Sample Output")
+    elif method == "Specific ledgers":
+        idx = method_two(work_df, mapping)
+
+    else:
+        total = st.number_input("Total sample size", 0, len(work_df), 10)
+        idx = method_three(work_df, mapping, total)
+
+    sampled = raw_df.loc[idx]
+
+    # ⭐ APPLY FY SORT
+    sampled = sort_financial_year(sampled, mapping.invoice_date)
+
+    st.write("Sample size:", len(sampled))
     st.dataframe(sampled, use_container_width=True)
 
-    if len(sampled) > 0:
+    if len(sampled):
         st.download_button(
             "Download Sample Excel",
-            dataframe_to_excel(sampled),
+            to_excel(sampled),
             "audit_sample.xlsx"
         )
 
 
 if __name__ == "__main__":
     main()
+
