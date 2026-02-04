@@ -1,13 +1,36 @@
 import io
 from dataclasses import dataclass
-from typing import Dict, Optional, List
+from typing import Dict
 
 import pandas as pd
 import streamlit as st
 
 
 # ======================================================
-# Data structure
+# PAGE CONFIG
+# ======================================================
+
+st.set_page_config(
+    page_title="Audit Sampling Tool",
+    layout="wide",
+    page_icon="📊"
+)
+
+
+# ======================================================
+# STYLING (simple professional theme)
+# ======================================================
+
+st.markdown("""
+<style>
+.block-container {padding-top: 1.5rem;}
+.stMetric {background-color:#f7f9fc;padding:10px;border-radius:10px;}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ======================================================
+# DATA STRUCTURE
 # ======================================================
 
 @dataclass
@@ -19,7 +42,7 @@ class ColumnMapping:
 
 
 # ======================================================
-# File loading
+# FILE LOADING
 # ======================================================
 
 def load_data(uploaded_file):
@@ -29,31 +52,7 @@ def load_data(uploaded_file):
 
 
 # ======================================================
-# Column mapping
-# ======================================================
-
-def build_mapping(df):
-    cols = df.columns.tolist()
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        inv = st.selectbox("Invoice Number", cols)
-        date = st.selectbox("Invoice Date", cols)
-
-    with c2:
-        amt = st.selectbox("Taxable Amount", cols)
-        led = st.selectbox("Ledger / Supplier / Customer", cols)
-
-    if len({inv, date, amt, led}) < 4:
-        st.warning("Each mapping must be different.")
-        return None
-
-    return ColumnMapping(inv, date, amt, led)
-
-
-# ======================================================
-# Helpers
+# HELPERS
 # ======================================================
 
 def normalize_dates(df, date_col):
@@ -62,31 +61,16 @@ def normalize_dates(df, date_col):
     return temp.dropna(subset=[date_col])
 
 
-# ======================================================
-# ⭐ NEW — Financial Year Sorting (Apr → Mar)
-# ======================================================
-
-def sort_financial_year(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
-    """Sort dataframe in Apr → Mar order while keeping original format."""
-
+def sort_financial_year(df: pd.DataFrame, date_col: str):
     temp = df.copy()
     temp["_date"] = pd.to_datetime(temp[date_col], errors="coerce")
-
-    # FY month index
     temp["_fy_month"] = (temp["_date"].dt.month - 4) % 12
     temp["_year"] = temp["_date"].dt.year
-
     temp = temp.sort_values(["_year", "_fy_month", "_date"])
-
     return temp.drop(columns=["_date", "_fy_month", "_year"])
 
 
-# ======================================================
-# Deterministic sampling → return indices only
-# ======================================================
-
 def evenly_spread_indices(df, sample_size, date_col):
-
     if sample_size <= 0 or df.empty:
         return []
 
@@ -107,34 +91,30 @@ def evenly_spread_indices(df, sample_size, date_col):
 
 
 # ======================================================
-# Method 1
+# METHODS
 # ======================================================
 
 def method_one(df, mapping):
-
     indices = []
-
     for _, g in df.groupby(mapping.ledger_name):
         indices.extend(evenly_spread_indices(g, 1, mapping.invoice_date))
-
     return indices
 
-
-# ======================================================
-# Method 2 (better filter + counts)
-# ======================================================
 
 def method_two(df, mapping):
 
     ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
 
+    st.subheader("🎯 Select Specific Ledgers")
+
     if "selected_ledgers" not in st.session_state:
         st.session_state.selected_ledgers = []
 
     selected = st.multiselect(
-        "Search & select ledgers",
+        "Search ledger name",
         ledgers,
-        default=st.session_state.selected_ledgers
+        default=st.session_state.selected_ledgers,
+        help="Type to filter like Excel search"
     )
 
     st.session_state.selected_ledgers = selected
@@ -156,7 +136,7 @@ def method_two(df, mapping):
 
     remaining_rows = len(df) - selected_rows
 
-    st.markdown(f"**Remaining ledgers rows: {remaining_rows}**")
+    st.info(f"Remaining rows: {remaining_rows}")
 
     remaining_count = st.number_input(
         "Samples for remaining ledgers",
@@ -177,14 +157,7 @@ def method_two(df, mapping):
     return indices
 
 
-# ======================================================
-# Method 3 (exact count fix)
-# ======================================================
-
 def method_three(df, mapping, total_samples):
-
-    if total_samples <= 0:
-        return []
 
     total_rows = len(df)
 
@@ -199,7 +172,6 @@ def method_three(df, mapping, total_samples):
 
     for _, g in grouped:
         val = len(g) * total_samples / total_rows
-        raw.append(val)
         floor.append(int(val))
         frac.append(val - int(val))
 
@@ -219,7 +191,7 @@ def method_three(df, mapping, total_samples):
 
 
 # ======================================================
-# Excel export
+# EXCEL EXPORT
 # ======================================================
 
 def to_excel(df):
@@ -230,32 +202,43 @@ def to_excel(df):
 
 
 # ======================================================
-# MAIN
+# MAIN UI
 # ======================================================
 
 def main():
 
-    st.set_page_config(layout="wide")
-    st.title("Audit Sampling Tool")
+    st.title("📊 Audit Sampling Tool")
+    st.caption("Deterministic • Date-Spread • Audit Safe • No Random Sampling")
 
-    file = st.file_uploader("Upload Excel/CSV", type=["xlsx", "csv"])
+    file = st.file_uploader("Upload Excel/CSV file", type=["xlsx", "csv"])
 
     if not file:
+        st.info("Upload a file to start.")
         return
 
     raw_df = load_data(file)
 
-    mapping = build_mapping(raw_df)
-    if not mapping:
-        return
+    # ================= Sidebar =================
+    with st.sidebar:
+        st.header("⚙️ Settings")
+
+        cols = raw_df.columns.tolist()
+
+        inv = st.selectbox("Invoice Number", cols)
+        date = st.selectbox("Invoice Date", cols)
+        amt = st.selectbox("Taxable Amount", cols)
+        led = st.selectbox("Ledger Name", cols)
+
+        mapping = ColumnMapping(inv, date, amt, led)
+
+        method = st.radio(
+            "Sampling Method",
+            ["One per ledger", "Specific ledgers", "Proportionate"]
+        )
+
+    # ==========================================
 
     work_df = normalize_dates(raw_df, mapping.invoice_date)
-
-    method = st.radio(
-        "Method",
-        ["One per ledger", "Specific ledgers", "Proportionate"],
-        horizontal=True
-    )
 
     if method == "One per ledger":
         idx = method_one(work_df, mapping)
@@ -268,16 +251,26 @@ def main():
         idx = method_three(work_df, mapping, total)
 
     sampled = raw_df.loc[idx]
-
-    # ⭐ APPLY FY SORT
     sampled = sort_financial_year(sampled, mapping.invoice_date)
 
-    st.write("Sample size:", len(sampled))
-    st.dataframe(sampled, use_container_width=True)
+    # ================= Dashboard Metrics =================
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Total Rows", len(raw_df))
+    c2.metric("Sample Size", len(sampled))
+    c3.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
+
+    st.divider()
+
+    # ================= Output =================
+
+    st.subheader("📄 Sampled Data")
+    st.dataframe(sampled, use_container_width=True, height=500)
 
     if len(sampled):
         st.download_button(
-            "Download Sample Excel",
+            "⬇ Download Sample Excel",
             to_excel(sampled),
             "audit_sample.xlsx"
         )
@@ -285,4 +278,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
