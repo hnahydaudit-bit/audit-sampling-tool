@@ -1,7 +1,5 @@
 import io
 from dataclasses import dataclass
-from typing import Dict
-
 import pandas as pd
 import streamlit as st
 
@@ -15,6 +13,19 @@ st.set_page_config(
     layout="wide",
     page_icon="📊"
 )
+
+# ======================================================
+# ⭐ CHANGE 1 — BLUE RADIO COLOR
+# ======================================================
+
+st.markdown("""
+<style>
+div[role="radiogroup"] label[data-checked="true"]{
+    background-color:#2563eb !important;
+    color:white !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 # ======================================================
@@ -49,7 +60,6 @@ def normalize_dates(df, date_col):
     return temp.dropna(subset=[date_col])
 
 
-# ⭐ FINANCIAL YEAR SORT
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
@@ -63,14 +73,12 @@ def sort_financial_year(df, date_col):
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
-# ⭐ DATE FORMAT FIX (for both UI + Excel)
 def clean_date_format(df, date_col):
     temp = df.copy()
     temp[date_col] = pd.to_datetime(temp[date_col]).dt.strftime("%d-%m-%Y")
     return temp
 
 
-# deterministic sampling
 def evenly_spread_indices(df, n, date_col):
 
     if n <= 0 or df.empty:
@@ -103,28 +111,62 @@ def method_one(df, mapping):
     return idx
 
 
+# ======================================================
+# ⭐ CHANGE 2 — EXCEL-LIKE FILTER (NO RESET)
+# ======================================================
+
 def method_two(df, mapping):
+
+    st.subheader("Select Ledgers")
 
     ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
 
-    if "selected" not in st.session_state:
-        st.session_state.selected = []
+    # Search box like Excel
+    search = st.text_input("Search ledger (type to filter)")
 
-    selected = st.multiselect("Select Ledgers", ledgers, default=st.session_state.selected)
-    st.session_state.selected = selected
+    if search:
+        filtered_ledgers = [l for l in ledgers if search.lower() in l.lower()]
+    else:
+        filtered_ledgers = ledgers
+
+    if "selected_ledgers" not in st.session_state:
+        st.session_state.selected_ledgers = []
+
+    selected = st.multiselect(
+        "Choose ledgers",
+        filtered_ledgers,
+        default=[x for x in st.session_state.selected_ledgers if x in filtered_ledgers]
+    )
+
+    # keep selections persistent
+    st.session_state.selected_ledgers = list(
+        set(st.session_state.selected_ledgers + selected)
+    )
 
     plan = {}
     selected_rows = 0
 
-    for l in selected:
+    for l in st.session_state.selected_ledgers:
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
-        plan[l] = st.number_input(f"{l} rows:{cnt}", 0, cnt, 1)
+
+        plan[l] = st.number_input(
+            f"{l} rows:{cnt}",
+            0,
+            cnt,
+            1,
+            key=f"s_{l}"
+        )
 
     remaining_rows = len(df) - selected_rows
     st.info(f"Remaining rows: {remaining_rows}")
 
-    rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
+    rem = st.number_input(
+        "Samples for remaining",
+        0,
+        remaining_rows,
+        min(5, remaining_rows)
+    )
 
     idx = []
 
@@ -166,7 +208,7 @@ def method_three(df, mapping, total):
 
 
 # ======================================================
-# EXCEL EXPORT
+# EXPORT
 # ======================================================
 
 def to_excel(df):
@@ -191,11 +233,9 @@ def main():
 
     raw_df = load_data(file)
 
-    # ================= SIDEBAR =================
-
     with st.sidebar:
 
-        st.header("⚙️ Settings")
+        st.header("Settings")
 
         cols = raw_df.columns.tolist()
 
@@ -211,8 +251,6 @@ def main():
             ["One per ledger", "Specific ledgers", "Proportionate"]
         )
 
-    # ==========================================
-
     work_df = normalize_dates(raw_df, mapping.invoice_date)
 
     if method == "One per ledger":
@@ -227,11 +265,7 @@ def main():
 
     sampled = raw_df.loc[idx]
     sampled = sort_financial_year(sampled, mapping.invoice_date)
-
-    # ⭐ FIX DATE DISPLAY
     sampled = clean_date_format(sampled, mapping.invoice_date)
-
-    # ================= SIDEBAR METRICS =================
 
     with st.sidebar:
         st.divider()
@@ -239,9 +273,6 @@ def main():
         st.metric("Sample Size", len(sampled))
         st.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
 
-    # ===============================================
-
-    st.subheader("Sampled Output")
     st.dataframe(sampled, use_container_width=True)
 
     if len(sampled):
@@ -254,6 +285,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
