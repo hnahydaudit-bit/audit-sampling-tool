@@ -15,18 +15,40 @@ st.set_page_config(
 )
 
 # ======================================================
-# BLUE THEME
+# ⭐ FORCE COMPLETE BLUE THEME (NO RED ANYWHERE)
 # ======================================================
 
 st.markdown("""
 <style>
+
+/* radio */
 div[role="radiogroup"] label[data-checked="true"]{
-    background-color:#2563eb !important;
+    background:#2563eb !important;
     color:white !important;
 }
-input[type="checkbox"]:checked {
+
+/* checkbox */
+input[type="checkbox"]{
     accent-color:#2563eb !important;
 }
+
+/* buttons */
+.stButton>button{
+    background:#2563eb !important;
+    color:white !important;
+}
+
+/* tags / pills */
+[data-baseweb="tag"]{
+    background:#2563eb !important;
+    color:white !important;
+}
+
+/* focus */
+:focus{
+    border-color:#2563eb !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -44,7 +66,7 @@ class ColumnMapping:
 
 
 # ======================================================
-# LOAD FILE
+# FILE LOADING
 # ======================================================
 
 def load_data(uploaded_file):
@@ -66,10 +88,13 @@ def normalize_dates(df, date_col):
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
+
     temp["_fy"] = (d.dt.month - 4) % 12
     temp["_yr"] = d.dt.year
     temp["_d"] = d
+
     temp = temp.sort_values(["_yr", "_fy", "_d"])
+
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
@@ -111,32 +136,41 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ PERFECT EXCEL-STYLE FILTER
+# ⭐ TRUE EXCEL-LIKE FILTER
 # ======================================================
 
 def method_two(df, mapping):
 
     st.subheader("Select Ledgers")
 
-    ledger_counts = (
+    # Master ledger list (never filtered)
+    master = (
         df.groupby(mapping.ledger_name)
         .size()
         .reset_index(name="Rows")
         .sort_values(mapping.ledger_name)
     )
 
-    # ⭐ Search box
-    search = st.text_input("Filter ledgers")
+    # store selections separately (Excel style)
+    if "selected_ledgers" not in st.session_state:
+        st.session_state.selected_ledgers = []
 
+    search = st.text_input("Filter")
+
+    # filter only for display
     if search:
-        ledger_counts = ledger_counts[
-            ledger_counts[mapping.ledger_name].str.contains(search, case=False)
-        ]
+        display_df = master[
+            master[mapping.ledger_name].str.contains(search, case=False)
+        ].copy()
+    else:
+        display_df = master.copy()
 
-    ledger_counts["Select"] = False
+    display_df["Select"] = display_df[mapping.ledger_name].isin(
+        st.session_state.selected_ledgers
+    )
 
     edited = st.data_editor(
-        ledger_counts,
+        display_df,
         use_container_width=True,
         height=350,
         column_config={
@@ -145,7 +179,16 @@ def method_two(df, mapping):
         disabled=[mapping.ledger_name, "Rows"]
     )
 
-    selected_ledgers = edited.loc[edited["Select"], mapping.ledger_name].tolist()
+    # update selections
+    selected_now = edited.loc[edited["Select"], mapping.ledger_name].tolist()
+
+    st.session_state.selected_ledgers = list(
+        set(st.session_state.selected_ledgers + selected_now)
+    )
+
+    selected_ledgers = st.session_state.selected_ledgers
+
+    # --------------------------------------------------
 
     plan = {}
     selected_rows = 0
@@ -165,7 +208,12 @@ def method_two(df, mapping):
     remaining_rows = len(df) - selected_rows
     st.info(f"Remaining rows: {remaining_rows}")
 
-    rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
+    rem = st.number_input(
+        "Samples for remaining",
+        0,
+        remaining_rows,
+        min(5, remaining_rows)
+    )
 
     idx = []
 
