@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# BLUE THEME
+# BLUE THEME (no red anywhere)
 # ======================================================
 
 st.markdown("""
@@ -48,7 +48,7 @@ class ColumnMapping:
 
 
 # ======================================================
-# LOAD FILE
+# FILE LOADING
 # ======================================================
 
 def load_data(uploaded_file):
@@ -70,10 +70,13 @@ def normalize_dates(df, date_col):
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
+
     temp["_fy"] = (d.dt.month - 4) % 12
     temp["_yr"] = d.dt.year
     temp["_d"] = d
+
     temp = temp.sort_values(["_yr", "_fy", "_d"])
+
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
@@ -84,6 +87,7 @@ def clean_date_format(df, date_col):
 
 
 def evenly_spread_indices(df, n, date_col):
+
     if n <= 0 or df.empty:
         return []
 
@@ -115,7 +119,7 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ SPECIFIC LEDGER METHOD (NOW SHOWS ROW COUNT)
+# ⭐ Specific Ledger (Excel-style filter + row count)
 # ======================================================
 
 def method_two(df, mapping):
@@ -127,10 +131,7 @@ def method_two(df, mapping):
         .sort_values(mapping.ledger_name)
     )
 
-    if "selected_ledgers" not in st.session_state:
-        st.session_state.selected_ledgers = []
-
-    search = st.text_input("Filter")
+    search = st.text_input("Filter ledgers")
 
     if search:
         display_df = ledger_counts[
@@ -139,9 +140,7 @@ def method_two(df, mapping):
     else:
         display_df = ledger_counts.copy()
 
-    display_df["Select"] = display_df[mapping.ledger_name].isin(
-        st.session_state.selected_ledgers
-    )
+    display_df["Select"] = False
 
     edited = st.data_editor(
         display_df,
@@ -152,11 +151,6 @@ def method_two(df, mapping):
     )
 
     selected_ledgers = edited.loc[edited["Select"], mapping.ledger_name].tolist()
-    st.session_state.selected_ledgers = selected_ledgers
-
-    # ---------------------------------------------------
-    # ⭐ HERE WE SHOW ROW COUNT BESIDE EACH LEDGER
-    # ---------------------------------------------------
 
     plan = {}
     selected_rows = 0
@@ -165,6 +159,7 @@ def method_two(df, mapping):
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
 
+        # ⭐ shows row count here
         plan[l] = st.number_input(
             f"{l} (rows: {cnt}) samples",
             0,
@@ -174,8 +169,6 @@ def method_two(df, mapping):
         )
 
     remaining_rows = len(df) - selected_rows
-    st.info(f"Remaining rows: {remaining_rows}")
-
     rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
 
     idx = []
@@ -242,17 +235,25 @@ def main():
 
     raw_df = load_data(file)
 
-    cols = raw_df.columns.tolist()
+    # ==================================================
+    # ⭐ EVERYTHING STAYS IN LEFT SIDEBAR
+    # ==================================================
 
-    inv = st.selectbox("Invoice Number", cols)
-    date = st.selectbox("Invoice Date", cols)
-    amt = st.selectbox("Taxable Amount", cols)
-    led = st.selectbox("Ledger Name", cols)
+    with st.sidebar:
 
-    mapping = ColumnMapping(inv, date, amt, led)
+        cols = raw_df.columns.tolist()
 
-    method = st.radio("Sampling Method",
-                      ["One per ledger", "Specific ledgers", "Proportionate"])
+        inv = st.selectbox("Invoice Number", cols)
+        date = st.selectbox("Invoice Date", cols)
+        amt = st.selectbox("Taxable Amount", cols)
+        led = st.selectbox("Ledger Name", cols)
+
+        mapping = ColumnMapping(inv, date, amt, led)
+
+        method = st.radio(
+            "Sampling Method",
+            ["One per ledger", "Specific ledgers", "Proportionate"]
+        )
 
     work_df = normalize_dates(raw_df, mapping.invoice_date)
 
@@ -267,6 +268,20 @@ def main():
     sampled = raw_df.loc[idx]
     sampled = sort_financial_year(sampled, mapping.invoice_date)
     sampled = clean_date_format(sampled, mapping.invoice_date)
+
+    # ==================================================
+    # ⭐ Sidebar metrics (unchanged as requested)
+    # ==================================================
+
+    with st.sidebar:
+        st.divider()
+        st.metric("Total Rows", len(raw_df))
+        st.metric("Sample Size", len(sampled))
+        st.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
+
+    # ==================================================
+    # Serial numbering in UI
+    # ==================================================
 
     sampled_display = sampled.copy()
     sampled_display.index = range(1, len(sampled_display) + 1)
