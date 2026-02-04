@@ -15,40 +15,22 @@ st.set_page_config(
 )
 
 # ======================================================
-# ⭐ FORCE COMPLETE BLUE THEME (NO RED ANYWHERE)
+# BLUE THEME
 # ======================================================
 
 st.markdown("""
 <style>
-
-/* radio */
 div[role="radiogroup"] label[data-checked="true"]{
     background:#2563eb !important;
     color:white !important;
 }
-
-/* checkbox */
 input[type="checkbox"]{
     accent-color:#2563eb !important;
 }
-
-/* buttons */
 .stButton>button{
     background:#2563eb !important;
     color:white !important;
 }
-
-/* tags / pills */
-[data-baseweb="tag"]{
-    background:#2563eb !important;
-    color:white !important;
-}
-
-/* focus */
-:focus{
-    border-color:#2563eb !important;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,7 +48,7 @@ class ColumnMapping:
 
 
 # ======================================================
-# FILE LOADING
+# LOAD FILE
 # ======================================================
 
 def load_data(uploaded_file):
@@ -88,13 +70,10 @@ def normalize_dates(df, date_col):
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
-
     temp["_fy"] = (d.dt.month - 4) % 12
     temp["_yr"] = d.dt.year
     temp["_d"] = d
-
     temp = temp.sort_values(["_yr", "_fy", "_d"])
-
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
@@ -136,34 +115,29 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ TRUE EXCEL-LIKE FILTER
+# EXCEL-LIKE FILTER
 # ======================================================
 
 def method_two(df, mapping):
 
-    st.subheader("Select Ledgers")
-
-    # Master ledger list (never filtered)
-    master = (
+    ledger_counts = (
         df.groupby(mapping.ledger_name)
         .size()
         .reset_index(name="Rows")
         .sort_values(mapping.ledger_name)
     )
 
-    # store selections separately (Excel style)
     if "selected_ledgers" not in st.session_state:
         st.session_state.selected_ledgers = []
 
     search = st.text_input("Filter")
 
-    # filter only for display
     if search:
-        display_df = master[
-            master[mapping.ledger_name].str.contains(search, case=False)
+        display_df = ledger_counts[
+            ledger_counts[mapping.ledger_name].str.contains(search, case=False)
         ].copy()
     else:
-        display_df = master.copy()
+        display_df = ledger_counts.copy()
 
     display_df["Select"] = display_df[mapping.ledger_name].isin(
         st.session_state.selected_ledgers
@@ -173,47 +147,23 @@ def method_two(df, mapping):
         display_df,
         use_container_width=True,
         height=350,
-        column_config={
-            "Select": st.column_config.CheckboxColumn()
-        },
+        column_config={"Select": st.column_config.CheckboxColumn()},
         disabled=[mapping.ledger_name, "Rows"]
     )
 
-    # update selections
     selected_now = edited.loc[edited["Select"], mapping.ledger_name].tolist()
-
-    st.session_state.selected_ledgers = list(
-        set(st.session_state.selected_ledgers + selected_now)
-    )
-
-    selected_ledgers = st.session_state.selected_ledgers
-
-    # --------------------------------------------------
+    st.session_state.selected_ledgers = selected_now
 
     plan = {}
     selected_rows = 0
 
-    for l in selected_ledgers:
+    for l in selected_now:
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
-
-        plan[l] = st.number_input(
-            f"{l} samples",
-            0,
-            cnt,
-            1,
-            key=f"s_{l}"
-        )
+        plan[l] = st.number_input(f"{l} samples", 0, cnt, 1)
 
     remaining_rows = len(df) - selected_rows
-    st.info(f"Remaining rows: {remaining_rows}")
-
-    rem = st.number_input(
-        "Samples for remaining",
-        0,
-        remaining_rows,
-        min(5, remaining_rows)
-    )
+    rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
 
     idx = []
 
@@ -274,7 +224,6 @@ def main():
     st.title("📊 Audit Sampling Tool")
 
     file = st.file_uploader("Upload Excel/CSV", type=["xlsx", "csv"])
-
     if not file:
         return
 
@@ -291,19 +240,15 @@ def main():
 
         mapping = ColumnMapping(inv, date, amt, led)
 
-        method = st.radio(
-            "Sampling Method",
-            ["One per ledger", "Specific ledgers", "Proportionate"]
-        )
+        method = st.radio("Sampling Method",
+                          ["One per ledger", "Specific ledgers", "Proportionate"])
 
     work_df = normalize_dates(raw_df, mapping.invoice_date)
 
     if method == "One per ledger":
         idx = method_one(work_df, mapping)
-
     elif method == "Specific ledgers":
         idx = method_two(work_df, mapping)
-
     else:
         total = st.number_input("Total sample size", 0, len(work_df), 10)
         idx = method_three(work_df, mapping, total)
@@ -312,13 +257,11 @@ def main():
     sampled = sort_financial_year(sampled, mapping.invoice_date)
     sampled = clean_date_format(sampled, mapping.invoice_date)
 
-    with st.sidebar:
-        st.divider()
-        st.metric("Total Rows", len(raw_df))
-        st.metric("Sample Size", len(sampled))
-        st.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
+    # ⭐ SERIAL NUMBER FOR UI ONLY
+    sampled_display = sampled.copy()
+    sampled_display.index = range(1, len(sampled_display) + 1)
 
-    st.dataframe(sampled, use_container_width=True)
+    st.dataframe(sampled_display, use_container_width=True)
 
     if len(sampled):
         st.download_button("Download Excel", to_excel(sampled), "audit_sample.xlsx")
@@ -326,3 +269,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
