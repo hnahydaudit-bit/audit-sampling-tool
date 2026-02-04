@@ -15,29 +15,18 @@ st.set_page_config(
 )
 
 # ======================================================
-# ⭐ FORCE BLUE THEME (radio + checkboxes + selections)
+# BLUE THEME
 # ======================================================
 
 st.markdown("""
 <style>
-
-/* radio blue */
 div[role="radiogroup"] label[data-checked="true"]{
     background-color:#2563eb !important;
     color:white !important;
 }
-
-/* checkbox blue */
 input[type="checkbox"]:checked {
     accent-color:#2563eb !important;
 }
-
-/* buttons blue */
-.stButton>button {
-    background-color:#2563eb;
-    color:white;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -77,13 +66,10 @@ def normalize_dates(df, date_col):
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
-
     temp["_fy"] = (d.dt.month - 4) % 12
     temp["_yr"] = d.dt.year
     temp["_d"] = d
-
     temp = temp.sort_values(["_yr", "_fy", "_d"])
-
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
@@ -94,7 +80,6 @@ def clean_date_format(df, date_col):
 
 
 def evenly_spread_indices(df, n, date_col):
-
     if n <= 0 or df.empty:
         return []
 
@@ -126,12 +111,12 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ EXCEL-LIKE LEDGER FILTER (CHECKBOX TABLE)
+# ⭐ PERFECT EXCEL-STYLE FILTER
 # ======================================================
 
 def method_two(df, mapping):
 
-    st.subheader("Ledgers")
+    st.subheader("Select Ledgers")
 
     ledger_counts = (
         df.groupby(mapping.ledger_name)
@@ -140,6 +125,14 @@ def method_two(df, mapping):
         .sort_values(mapping.ledger_name)
     )
 
+    # ⭐ Search box
+    search = st.text_input("Filter ledgers")
+
+    if search:
+        ledger_counts = ledger_counts[
+            ledger_counts[mapping.ledger_name].str.contains(search, case=False)
+        ]
+
     ledger_counts["Select"] = False
 
     edited = st.data_editor(
@@ -147,7 +140,7 @@ def method_two(df, mapping):
         use_container_width=True,
         height=350,
         column_config={
-            "Select": st.column_config.CheckboxColumn(required=False)
+            "Select": st.column_config.CheckboxColumn()
         },
         disabled=[mapping.ledger_name, "Rows"]
     )
@@ -172,12 +165,7 @@ def method_two(df, mapping):
     remaining_rows = len(df) - selected_rows
     st.info(f"Remaining rows: {remaining_rows}")
 
-    rem = st.number_input(
-        "Samples for remaining",
-        0,
-        remaining_rows,
-        min(5, remaining_rows)
-    )
+    rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
 
     idx = []
 
@@ -245,8 +233,6 @@ def main():
     raw_df = load_data(file)
 
     with st.sidebar:
-
-        st.header("Settings")
 
         cols = raw_df.columns.tolist()
 
