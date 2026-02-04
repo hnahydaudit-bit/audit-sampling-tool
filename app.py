@@ -30,7 +30,7 @@ class ColumnMapping:
 
 
 # ======================================================
-# FILE LOADING
+# LOAD FILE
 # ======================================================
 
 def load_data(uploaded_file):
@@ -49,29 +49,42 @@ def normalize_dates(df, date_col):
     return temp.dropna(subset=[date_col])
 
 
-def sort_financial_year(df: pd.DataFrame, date_col: str):
+# ⭐ FINANCIAL YEAR SORT
+def sort_financial_year(df, date_col):
     temp = df.copy()
-    temp["_date"] = pd.to_datetime(temp[date_col], errors="coerce")
-    temp["_fy_month"] = (temp["_date"].dt.month - 4) % 12
-    temp["_year"] = temp["_date"].dt.year
-    temp = temp.sort_values(["_year", "_fy_month", "_date"])
-    return temp.drop(columns=["_date", "_fy_month", "_year"])
+    d = pd.to_datetime(temp[date_col])
+
+    temp["_fy"] = (d.dt.month - 4) % 12
+    temp["_yr"] = d.dt.year
+    temp["_d"] = d
+
+    temp = temp.sort_values(["_yr", "_fy", "_d"])
+
+    return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
-def evenly_spread_indices(df, sample_size, date_col):
+# ⭐ DATE FORMAT FIX (for both UI + Excel)
+def clean_date_format(df, date_col):
+    temp = df.copy()
+    temp[date_col] = pd.to_datetime(temp[date_col]).dt.strftime("%d-%m-%Y")
+    return temp
 
-    if sample_size <= 0 or df.empty:
+
+# deterministic sampling
+def evenly_spread_indices(df, n, date_col):
+
+    if n <= 0 or df.empty:
         return []
 
     df_sorted = df.sort_values(date_col)
 
-    if sample_size >= len(df_sorted):
+    if n >= len(df_sorted):
         return df_sorted.index.tolist()
 
-    bucket = len(df_sorted) / sample_size
+    bucket = len(df_sorted) / n
     idx = []
 
-    for i in range(sample_size):
+    for i in range(n):
         pos = int((i + 0.5) * bucket)
         pos = min(pos, len(df_sorted) - 1)
         idx.append(df_sorted.index[pos])
@@ -84,26 +97,21 @@ def evenly_spread_indices(df, sample_size, date_col):
 # ======================================================
 
 def method_one(df, mapping):
-    indices = []
+    idx = []
     for _, g in df.groupby(mapping.ledger_name):
-        indices.extend(evenly_spread_indices(g, 1, mapping.invoice_date))
-    return indices
+        idx.extend(evenly_spread_indices(g, 1, mapping.invoice_date))
+    return idx
 
 
 def method_two(df, mapping):
 
     ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
 
-    if "selected_ledgers" not in st.session_state:
-        st.session_state.selected_ledgers = []
+    if "selected" not in st.session_state:
+        st.session_state.selected = []
 
-    selected = st.multiselect(
-        "Search & select ledgers",
-        ledgers,
-        default=st.session_state.selected_ledgers
-    )
-
-    st.session_state.selected_ledgers = selected
+    selected = st.multiselect("Select Ledgers", ledgers, default=st.session_state.selected)
+    st.session_state.selected = selected
 
     plan = {}
     selected_rows = 0
@@ -111,87 +119,60 @@ def method_two(df, mapping):
     for l in selected:
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
-
-        plan[l] = st.number_input(
-            f"{l} (rows: {cnt})",
-            0,
-            cnt,
-            1,
-            key=f"s_{l}"
-        )
+        plan[l] = st.number_input(f"{l} rows:{cnt}", 0, cnt, 1)
 
     remaining_rows = len(df) - selected_rows
-
     st.info(f"Remaining rows: {remaining_rows}")
 
-    remaining_count = st.number_input(
-        "Samples for remaining ledgers",
-        0,
-        remaining_rows,
-        min(5, remaining_rows)
-    )
+    rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
 
-    indices = []
+    idx = []
 
     for ledger, g in df.groupby(mapping.ledger_name):
         if ledger in plan:
-            indices.extend(evenly_spread_indices(g, plan[ledger], mapping.invoice_date))
+            idx.extend(evenly_spread_indices(g, plan[ledger], mapping.invoice_date))
 
     others = df[~df[mapping.ledger_name].isin(plan.keys())]
-    indices.extend(evenly_spread_indices(others, remaining_count, mapping.invoice_date))
+    idx.extend(evenly_spread_indices(others, rem, mapping.invoice_date))
 
-    return indices
+    return idx
 
 
-def method_three(df, mapping, total_samples):
+def method_three(df, mapping, total):
 
     total_rows = len(df)
-
-    if total_samples >= total_rows:
-        return df.index.tolist()
-
     grouped = list(df.groupby(mapping.ledger_name))
 
-    floor = []
-    frac = []
+    floors, fracs = [], []
 
     for _, g in grouped:
-        val = len(g) * total_samples / total_rows
-        floor.append(int(val))
-        frac.append(val - int(val))
+        val = len(g) * total / total_rows
+        floors.append(int(val))
+        fracs.append(val - int(val))
 
-    remaining = total_samples - sum(floor)
+    rem = total - sum(floors)
 
-    order = sorted(range(len(frac)), key=lambda i: frac[i], reverse=True)
+    order = sorted(range(len(fracs)), key=lambda i: fracs[i], reverse=True)
 
-    for i in order[:remaining]:
-        floor[i] += 1
+    for i in order[:rem]:
+        floors[i] += 1
 
-    indices = []
+    idx = []
 
-    for (_, g), cnt in zip(grouped, floor):
-        indices.extend(evenly_spread_indices(g, cnt, mapping.invoice_date))
+    for (_, g), c in zip(grouped, floors):
+        idx.extend(evenly_spread_indices(g, c, mapping.invoice_date))
 
-    return indices
+    return idx
 
 
 # ======================================================
-# ⭐ FIXED EXCEL EXPORT (date formatting preserved)
+# EXCEL EXPORT
 # ======================================================
 
 def to_excel(df):
-    export_df = df.copy()
-
-    # convert datetime → date only (removes time 00:00:00)
-    for col in export_df.columns:
-        if pd.api.types.is_datetime64_any_dtype(export_df[col]):
-            export_df[col] = export_df[col].dt.date
-
     bio = io.BytesIO()
-
     with pd.ExcelWriter(bio, engine="openpyxl") as w:
-        export_df.to_excel(w, index=False)
-
+        df.to_excel(w, index=False)
     return bio.getvalue()
 
 
@@ -210,22 +191,29 @@ def main():
 
     raw_df = load_data(file)
 
-    cols = raw_df.columns.tolist()
+    # ================= SIDEBAR =================
 
-    inv = st.selectbox("Invoice Number", cols)
-    date = st.selectbox("Invoice Date", cols)
-    amt = st.selectbox("Taxable Amount", cols)
-    led = st.selectbox("Ledger Name", cols)
+    with st.sidebar:
 
-    mapping = ColumnMapping(inv, date, amt, led)
+        st.header("⚙️ Settings")
+
+        cols = raw_df.columns.tolist()
+
+        inv = st.selectbox("Invoice Number", cols)
+        date = st.selectbox("Invoice Date", cols)
+        amt = st.selectbox("Taxable Amount", cols)
+        led = st.selectbox("Ledger Name", cols)
+
+        mapping = ColumnMapping(inv, date, amt, led)
+
+        method = st.radio(
+            "Sampling Method",
+            ["One per ledger", "Specific ledgers", "Proportionate"]
+        )
+
+    # ==========================================
 
     work_df = normalize_dates(raw_df, mapping.invoice_date)
-
-    method = st.radio(
-        "Method",
-        ["One per ledger", "Specific ledgers", "Proportionate"],
-        horizontal=True
-    )
 
     if method == "One per ledger":
         idx = method_one(work_df, mapping)
@@ -240,12 +228,25 @@ def main():
     sampled = raw_df.loc[idx]
     sampled = sort_financial_year(sampled, mapping.invoice_date)
 
-    st.write("Sample size:", len(sampled))
+    # ⭐ FIX DATE DISPLAY
+    sampled = clean_date_format(sampled, mapping.invoice_date)
+
+    # ================= SIDEBAR METRICS =================
+
+    with st.sidebar:
+        st.divider()
+        st.metric("Total Rows", len(raw_df))
+        st.metric("Sample Size", len(sampled))
+        st.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
+
+    # ===============================================
+
+    st.subheader("Sampled Output")
     st.dataframe(sampled, use_container_width=True)
 
     if len(sampled):
         st.download_button(
-            "Download Sample Excel",
+            "Download Excel",
             to_excel(sampled),
             "audit_sample.xlsx"
         )
@@ -253,6 +254,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
