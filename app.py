@@ -15,15 +15,29 @@ st.set_page_config(
 )
 
 # ======================================================
-# ⭐ Blue radio button instead of red
+# ⭐ FORCE BLUE THEME (radio + checkboxes + selections)
 # ======================================================
 
 st.markdown("""
 <style>
+
+/* radio blue */
 div[role="radiogroup"] label[data-checked="true"]{
     background-color:#2563eb !important;
     color:white !important;
 }
+
+/* checkbox blue */
+input[type="checkbox"]:checked {
+    accent-color:#2563eb !important;
+}
+
+/* buttons blue */
+.stButton>button {
+    background-color:#2563eb;
+    color:white;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,7 +74,6 @@ def normalize_dates(df, date_col):
     return temp.dropna(subset=[date_col])
 
 
-# Financial year sort (Apr → Mar)
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
@@ -74,14 +87,12 @@ def sort_financial_year(df, date_col):
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
-# Remove time from date
 def clean_date_format(df, date_col):
     temp = df.copy()
     temp[date_col] = pd.to_datetime(temp[date_col]).dt.strftime("%d-%m-%Y")
     return temp
 
 
-# Deterministic sampler
 def evenly_spread_indices(df, n, date_col):
 
     if n <= 0 or df.empty:
@@ -115,32 +126,43 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ Excel-style filter (ONLY multiselect)
+# ⭐ EXCEL-LIKE LEDGER FILTER (CHECKBOX TABLE)
 # ======================================================
 
 def method_two(df, mapping):
 
-    st.subheader("Select Ledgers")
+    st.subheader("Ledgers")
 
-    ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
-
-    # Single dropdown with built-in search (Excel style)
-    selected = st.multiselect(
-        "Choose ledgers (type to search like Excel)",
-        ledgers,
-        default=st.session_state.get("selected_ledgers", []),
-        key="selected_ledgers"
+    ledger_counts = (
+        df.groupby(mapping.ledger_name)
+        .size()
+        .reset_index(name="Rows")
+        .sort_values(mapping.ledger_name)
     )
+
+    ledger_counts["Select"] = False
+
+    edited = st.data_editor(
+        ledger_counts,
+        use_container_width=True,
+        height=350,
+        column_config={
+            "Select": st.column_config.CheckboxColumn(required=False)
+        },
+        disabled=[mapping.ledger_name, "Rows"]
+    )
+
+    selected_ledgers = edited.loc[edited["Select"], mapping.ledger_name].tolist()
 
     plan = {}
     selected_rows = 0
 
-    for l in selected:
+    for l in selected_ledgers:
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
 
         plan[l] = st.number_input(
-            f"{l} rows: {cnt}",
+            f"{l} samples",
             0,
             cnt,
             1,
@@ -222,7 +244,6 @@ def main():
 
     raw_df = load_data(file)
 
-    # Sidebar settings
     with st.sidebar:
 
         st.header("Settings")
@@ -257,7 +278,6 @@ def main():
     sampled = sort_financial_year(sampled, mapping.invoice_date)
     sampled = clean_date_format(sampled, mapping.invoice_date)
 
-    # Sidebar metrics
     with st.sidebar:
         st.divider()
         st.metric("Total Rows", len(raw_df))
@@ -267,11 +287,7 @@ def main():
     st.dataframe(sampled, use_container_width=True)
 
     if len(sampled):
-        st.download_button(
-            "Download Excel",
-            to_excel(sampled),
-            "audit_sample.xlsx"
-        )
+        st.download_button("Download Excel", to_excel(sampled), "audit_sample.xlsx")
 
 
 if __name__ == "__main__":
