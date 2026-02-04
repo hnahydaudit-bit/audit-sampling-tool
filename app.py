@@ -18,18 +18,6 @@ st.set_page_config(
 
 
 # ======================================================
-# STYLING (simple professional theme)
-# ======================================================
-
-st.markdown("""
-<style>
-.block-container {padding-top: 1.5rem;}
-.stMetric {background-color:#f7f9fc;padding:10px;border-radius:10px;}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ======================================================
 # DATA STRUCTURE
 # ======================================================
 
@@ -71,6 +59,7 @@ def sort_financial_year(df: pd.DataFrame, date_col: str):
 
 
 def evenly_spread_indices(df, sample_size, date_col):
+
     if sample_size <= 0 or df.empty:
         return []
 
@@ -105,16 +94,13 @@ def method_two(df, mapping):
 
     ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
 
-    st.subheader("🎯 Select Specific Ledgers")
-
     if "selected_ledgers" not in st.session_state:
         st.session_state.selected_ledgers = []
 
     selected = st.multiselect(
-        "Search ledger name",
+        "Search & select ledgers",
         ledgers,
-        default=st.session_state.selected_ledgers,
-        help="Type to filter like Excel search"
+        default=st.session_state.selected_ledgers
     )
 
     st.session_state.selected_ledgers = selected
@@ -166,7 +152,6 @@ def method_three(df, mapping, total_samples):
 
     grouped = list(df.groupby(mapping.ledger_name))
 
-    raw = []
     floor = []
     frac = []
 
@@ -191,54 +176,56 @@ def method_three(df, mapping, total_samples):
 
 
 # ======================================================
-# EXCEL EXPORT
+# ⭐ FIXED EXCEL EXPORT (date formatting preserved)
 # ======================================================
 
 def to_excel(df):
+    export_df = df.copy()
+
+    # convert datetime → date only (removes time 00:00:00)
+    for col in export_df.columns:
+        if pd.api.types.is_datetime64_any_dtype(export_df[col]):
+            export_df[col] = export_df[col].dt.date
+
     bio = io.BytesIO()
+
     with pd.ExcelWriter(bio, engine="openpyxl") as w:
-        df.to_excel(w, index=False)
+        export_df.to_excel(w, index=False)
+
     return bio.getvalue()
 
 
 # ======================================================
-# MAIN UI
+# MAIN
 # ======================================================
 
 def main():
 
     st.title("📊 Audit Sampling Tool")
-    st.caption("Deterministic • Date-Spread • Audit Safe • No Random Sampling")
 
-    file = st.file_uploader("Upload Excel/CSV file", type=["xlsx", "csv"])
+    file = st.file_uploader("Upload Excel/CSV", type=["xlsx", "csv"])
 
     if not file:
-        st.info("Upload a file to start.")
         return
 
     raw_df = load_data(file)
 
-    # ================= Sidebar =================
-    with st.sidebar:
-        st.header("⚙️ Settings")
+    cols = raw_df.columns.tolist()
 
-        cols = raw_df.columns.tolist()
+    inv = st.selectbox("Invoice Number", cols)
+    date = st.selectbox("Invoice Date", cols)
+    amt = st.selectbox("Taxable Amount", cols)
+    led = st.selectbox("Ledger Name", cols)
 
-        inv = st.selectbox("Invoice Number", cols)
-        date = st.selectbox("Invoice Date", cols)
-        amt = st.selectbox("Taxable Amount", cols)
-        led = st.selectbox("Ledger Name", cols)
-
-        mapping = ColumnMapping(inv, date, amt, led)
-
-        method = st.radio(
-            "Sampling Method",
-            ["One per ledger", "Specific ledgers", "Proportionate"]
-        )
-
-    # ==========================================
+    mapping = ColumnMapping(inv, date, amt, led)
 
     work_df = normalize_dates(raw_df, mapping.invoice_date)
+
+    method = st.radio(
+        "Method",
+        ["One per ledger", "Specific ledgers", "Proportionate"],
+        horizontal=True
+    )
 
     if method == "One per ledger":
         idx = method_one(work_df, mapping)
@@ -253,24 +240,12 @@ def main():
     sampled = raw_df.loc[idx]
     sampled = sort_financial_year(sampled, mapping.invoice_date)
 
-    # ================= Dashboard Metrics =================
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("Total Rows", len(raw_df))
-    c2.metric("Sample Size", len(sampled))
-    c3.metric("Coverage %", f"{round(len(sampled)/len(raw_df)*100,2)}%")
-
-    st.divider()
-
-    # ================= Output =================
-
-    st.subheader("📄 Sampled Data")
-    st.dataframe(sampled, use_container_width=True, height=500)
+    st.write("Sample size:", len(sampled))
+    st.dataframe(sampled, use_container_width=True)
 
     if len(sampled):
         st.download_button(
-            "⬇ Download Sample Excel",
+            "Download Sample Excel",
             to_excel(sampled),
             "audit_sample.xlsx"
         )
@@ -278,5 +253,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
