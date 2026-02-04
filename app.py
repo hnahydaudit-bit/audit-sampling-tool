@@ -115,7 +115,7 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# EXCEL-LIKE FILTER
+# ⭐ SPECIFIC LEDGER METHOD (NOW SHOWS ROW COUNT)
 # ======================================================
 
 def method_two(df, mapping):
@@ -151,18 +151,31 @@ def method_two(df, mapping):
         disabled=[mapping.ledger_name, "Rows"]
     )
 
-    selected_now = edited.loc[edited["Select"], mapping.ledger_name].tolist()
-    st.session_state.selected_ledgers = selected_now
+    selected_ledgers = edited.loc[edited["Select"], mapping.ledger_name].tolist()
+    st.session_state.selected_ledgers = selected_ledgers
+
+    # ---------------------------------------------------
+    # ⭐ HERE WE SHOW ROW COUNT BESIDE EACH LEDGER
+    # ---------------------------------------------------
 
     plan = {}
     selected_rows = 0
 
-    for l in selected_now:
+    for l in selected_ledgers:
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
-        plan[l] = st.number_input(f"{l} samples", 0, cnt, 1)
+
+        plan[l] = st.number_input(
+            f"{l} (rows: {cnt}) samples",
+            0,
+            cnt,
+            1,
+            key=f"s_{l}"
+        )
 
     remaining_rows = len(df) - selected_rows
+    st.info(f"Remaining rows: {remaining_rows}")
+
     rem = st.number_input("Samples for remaining", 0, remaining_rows, min(5, remaining_rows))
 
     idx = []
@@ -229,19 +242,17 @@ def main():
 
     raw_df = load_data(file)
 
-    with st.sidebar:
+    cols = raw_df.columns.tolist()
 
-        cols = raw_df.columns.tolist()
+    inv = st.selectbox("Invoice Number", cols)
+    date = st.selectbox("Invoice Date", cols)
+    amt = st.selectbox("Taxable Amount", cols)
+    led = st.selectbox("Ledger Name", cols)
 
-        inv = st.selectbox("Invoice Number", cols)
-        date = st.selectbox("Invoice Date", cols)
-        amt = st.selectbox("Taxable Amount", cols)
-        led = st.selectbox("Ledger Name", cols)
+    mapping = ColumnMapping(inv, date, amt, led)
 
-        mapping = ColumnMapping(inv, date, amt, led)
-
-        method = st.radio("Sampling Method",
-                          ["One per ledger", "Specific ledgers", "Proportionate"])
+    method = st.radio("Sampling Method",
+                      ["One per ledger", "Specific ledgers", "Proportionate"])
 
     work_df = normalize_dates(raw_df, mapping.invoice_date)
 
@@ -257,7 +268,6 @@ def main():
     sampled = sort_financial_year(sampled, mapping.invoice_date)
     sampled = clean_date_format(sampled, mapping.invoice_date)
 
-    # ⭐ SERIAL NUMBER FOR UI ONLY
     sampled_display = sampled.copy()
     sampled_display.index = range(1, len(sampled_display) + 1)
 
@@ -269,4 +279,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
