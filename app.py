@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# ⭐ CHANGE 1 — BLUE RADIO COLOR
+# ⭐ Blue radio button instead of red
 # ======================================================
 
 st.markdown("""
@@ -60,6 +60,7 @@ def normalize_dates(df, date_col):
     return temp.dropna(subset=[date_col])
 
 
+# Financial year sort (Apr → Mar)
 def sort_financial_year(df, date_col):
     temp = df.copy()
     d = pd.to_datetime(temp[date_col])
@@ -73,12 +74,14 @@ def sort_financial_year(df, date_col):
     return temp.drop(columns=["_fy", "_yr", "_d"])
 
 
+# Remove time from date
 def clean_date_format(df, date_col):
     temp = df.copy()
     temp[date_col] = pd.to_datetime(temp[date_col]).dt.strftime("%d-%m-%Y")
     return temp
 
 
+# Deterministic sampler
 def evenly_spread_indices(df, n, date_col):
 
     if n <= 0 or df.empty:
@@ -112,7 +115,7 @@ def method_one(df, mapping):
 
 
 # ======================================================
-# ⭐ CHANGE 2 — EXCEL-LIKE FILTER (NO RESET)
+# ⭐ Excel-style filter (ONLY multiselect)
 # ======================================================
 
 def method_two(df, mapping):
@@ -121,37 +124,23 @@ def method_two(df, mapping):
 
     ledgers = sorted(df[mapping.ledger_name].astype(str).unique())
 
-    # Search box like Excel
-    search = st.text_input("Search ledger (type to filter)")
-
-    if search:
-        filtered_ledgers = [l for l in ledgers if search.lower() in l.lower()]
-    else:
-        filtered_ledgers = ledgers
-
-    if "selected_ledgers" not in st.session_state:
-        st.session_state.selected_ledgers = []
-
+    # Single dropdown with built-in search (Excel style)
     selected = st.multiselect(
-        "Choose ledgers",
-        filtered_ledgers,
-        default=[x for x in st.session_state.selected_ledgers if x in filtered_ledgers]
-    )
-
-    # keep selections persistent
-    st.session_state.selected_ledgers = list(
-        set(st.session_state.selected_ledgers + selected)
+        "Choose ledgers (type to search like Excel)",
+        ledgers,
+        default=st.session_state.get("selected_ledgers", []),
+        key="selected_ledgers"
     )
 
     plan = {}
     selected_rows = 0
 
-    for l in st.session_state.selected_ledgers:
+    for l in selected:
         cnt = len(df[df[mapping.ledger_name] == l])
         selected_rows += cnt
 
         plan[l] = st.number_input(
-            f"{l} rows:{cnt}",
+            f"{l} rows: {cnt}",
             0,
             cnt,
             1,
@@ -233,6 +222,7 @@ def main():
 
     raw_df = load_data(file)
 
+    # Sidebar settings
     with st.sidebar:
 
         st.header("Settings")
@@ -267,6 +257,7 @@ def main():
     sampled = sort_financial_year(sampled, mapping.invoice_date)
     sampled = clean_date_format(sampled, mapping.invoice_date)
 
+    # Sidebar metrics
     with st.sidebar:
         st.divider()
         st.metric("Total Rows", len(raw_df))
@@ -285,8 +276,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
